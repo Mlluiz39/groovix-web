@@ -959,6 +959,8 @@ export default function App() {
   function playTrackByObject(track) {
     playTrack(ensureInLibrary(track), track)
   }
+
+  // iOS: create audio element in user gesture, play silently, then swap src
   function playTrack(idx, immediateTrack) {
     const track = immediateTrack || library[idx]
     if (!track) return
@@ -967,23 +969,32 @@ export default function App() {
     setCurrentTime(0)
     setDuration(track.duration || 180)
     setPlaying(true)
+
+    // Create audio immediately in sync call stack (user gesture context)
+    let audio = audioRef.current
+    if (!audio) {
+      audio = new Audio()
+      audio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA='
+      audio.play().catch(() => {})
+      audioRef.current = audio
+    }
+
+    audio.addEventListener('timeupdate', () =>
+      setCurrentTime(audio.currentTime),
+    )
+    audio.addEventListener('ended', handleTrackEnd)
+    audio.addEventListener(
+      'loadedmetadata',
+      () => audio.duration && setDuration(audio.duration),
+    )
+
     apiAudio(track.url)
       .then(info => {
         if (!info?.streamUrl) {
           startFallbackTimer()
           return
         }
-        const audio = new Audio()
         audio.src = `${API}/api/stream?url=${encodeURIComponent(info.streamUrl)}`
-        audioRef.current = audio
-        audio.addEventListener('timeupdate', () =>
-          setCurrentTime(audio.currentTime),
-        )
-        audio.addEventListener('ended', handleTrackEnd)
-        audio.addEventListener(
-          'loadedmetadata',
-          () => audio.duration && setDuration(audio.duration),
-        )
         audio.play().catch(() => startFallbackTimer())
       })
       .catch(() => startFallbackTimer())
