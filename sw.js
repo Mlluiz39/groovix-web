@@ -14,7 +14,9 @@ self.addEventListener('activate', (event) => {
 })
 
 self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url)
   if (event.request.method !== 'GET') return
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/.netlify/')) return
   event.respondWith(
     caches.match(event.request).then((cached) => {
       const fetched = fetch(event.request)
