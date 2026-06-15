@@ -810,6 +810,11 @@ export default function App() {
   const [toastMsg, setToastMsg] = useState('')
   const audioRef = useRef(null)
   const timerRef = useRef(null)
+  // Refs to avoid stale closures in timer callbacks
+  const repeatRef = useRef(repeat)
+  const durationRef = useRef(duration)
+  useEffect(() => { repeatRef.current = repeat }, [repeat])
+  useEffect(() => { durationRef.current = duration }, [duration])
   const currentTrack = library[currentIdx] || null
   const featured = homeTracks[0]
 
@@ -873,7 +878,8 @@ export default function App() {
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen])
 
   useEffect(() => () => stopAudio(), [])
 
@@ -925,9 +931,11 @@ export default function App() {
     timerRef.current = window.setInterval(
       () =>
         setCurrentTime(t => {
-          if (t + 0.25 >= duration) {
-            handleTrackEnd()
-            return duration
+          // Use refs to avoid stale closure on duration and repeat
+          const dur = durationRef.current
+          if (t + 0.25 >= dur) {
+            handleTrackEndRef.current()
+            return dur
           }
           return t + 0.25
         }),
@@ -942,11 +950,16 @@ export default function App() {
       audioRef.current.load() // release media resources
     }
   }
+  // handleTrackEnd ref to avoid stale closure in setInterval callback
+  const handleTrackEndRef = useRef(null)
+
   function ensureInLibrary(track) {
     const ix = library.findIndex(t => t.id === track.id)
     if (ix >= 0) return ix
+    // Return the index it will occupy (current length before append)
+    const nextIdx = library.length
     setLibrary(old => [...old, track])
-    return library.length
+    return nextIdx
   }
   function addToLibrary(track) {
     if (library.some(t => t.id === track.id))
@@ -1012,7 +1025,8 @@ export default function App() {
     })
   }
   function handleTrackEnd() {
-    if (repeat) {
+    // Use ref so the fallback timer callback always gets the latest value
+    if (repeatRef.current) {
       setCurrentTime(0)
       if (audioRef.current) audioRef.current.currentTime = 0
       else startFallbackTimer()
@@ -1020,6 +1034,8 @@ export default function App() {
     }
     playNext()
   }
+  // Keep handleTrackEndRef in sync so the interval callback can call it
+  handleTrackEndRef.current = handleTrackEnd
   function playNext() {
     if (!library.length) return
     playTrack(
@@ -1042,16 +1058,15 @@ export default function App() {
   }
   function toggleLike(track = currentTrack) {
     if (!track?.id) return
+    // Read liked state synchronously before the setter to avoid stale closure
     setLiked(old => {
       const next = new Set(old)
-      next.has(track.id) ? next.delete(track.id) : next.add(track.id)
+      const wasLiked = next.has(track.id)
+      wasLiked ? next.delete(track.id) : next.add(track.id)
+      // Schedule toast after state update with the correct value
+      setTimeout(() => toast(wasLiked ? 'Removida dos favoritos' : 'Adicionada aos favoritos'), 0)
       return next
     })
-    toast(
-      liked.has(track.id)
-        ? 'Removida dos favoritos'
-        : 'Adicionada aos favoritos',
-    )
   }
   function seek(value) {
     const next = Math.max(0, Math.min(duration, value || 0))
