@@ -971,13 +971,10 @@ export default function App() {
     setPlaying(true)
 
     // Create audio immediately in sync call stack (user gesture context)
-    let audio = audioRef.current
-    if (!audio) {
-      audio = new Audio()
-      audio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA='
-      audio.play().catch(() => {})
-      audioRef.current = audio
-    }
+    const audio = new Audio()
+    audio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA='
+    audioRef.current = audio
+    audio.play().catch(() => {})
 
     audio.addEventListener('timeupdate', () =>
       setCurrentTime(audio.currentTime),
@@ -990,6 +987,8 @@ export default function App() {
 
     apiAudio(track.url)
       .then(info => {
+        // Stale: user already switched track
+        if (audioRef.current !== audio) return
         if (!info?.streamUrl) {
           startFallbackTimer()
           return
@@ -997,7 +996,10 @@ export default function App() {
         audio.src = `${API}/api/stream?url=${encodeURIComponent(info.streamUrl)}`
         audio.play().catch(() => startFallbackTimer())
       })
-      .catch(() => startFallbackTimer())
+      .catch(() => {
+        if (audioRef.current !== audio) return
+        startFallbackTimer()
+      })
   }
   function togglePlay() {
     if (!currentTrack) return
