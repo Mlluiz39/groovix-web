@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 const API = import.meta.env.VITE_API_URL || ''
 const PROFILE_KEY = 'Groovix-Web'
 const RECENT_SEARCHES_KEY = 'Groovix-Recent-Searches'
+const LIBRARY_KEY = 'Groovix-Library'
+const LIKED_KEY = 'Groovix-Liked'
 
 const genres = [
   ['hip hop', 'Hip Hop', 'from-purple-950/80 to-cyan/50'],
@@ -57,6 +59,32 @@ function loadRecentSearches() {
 
 function saveRecentSearches(searches) {
   localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(searches))
+}
+
+function loadLibrary() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(LIBRARY_KEY))
+    return Array.isArray(stored) ? stored : []
+  } catch {
+    return []
+  }
+}
+
+function saveLibrary(library) {
+  localStorage.setItem(LIBRARY_KEY, JSON.stringify(library))
+}
+
+function loadLiked() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(LIKED_KEY))
+    return Array.isArray(stored) ? stored : []
+  } catch {
+    return []
+  }
+}
+
+function saveLiked(liked) {
+  localStorage.setItem(LIKED_KEY, JSON.stringify([...liked]))
 }
 
 function getGreeting() {
@@ -908,7 +936,9 @@ export default function App() {
           startFallbackTimer()
           return
         }
-        const audio = new Audio(info.streamUrl)
+        const audio = new Audio()
+        audio.referrerPolicy = 'no-referrer'
+        audio.src = info.streamUrl
         audioRef.current = audio
         audio.addEventListener('timeupdate', () =>
           setCurrentTime(audio.currentTime),
