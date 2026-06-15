@@ -1,6 +1,6 @@
 exports.handler = async (event) => {
-  const API = process.env.VITE_API_URL
-  if (!API) return { statusCode: 500, body: 'VITE_API_URL not set' }
+  const API = process.env.API_BACKEND_URL
+  if (!API) return { statusCode: 500, body: 'API_BACKEND_URL not set' }
 
   // event.path = /.netlify/functions/proxy/search?q=hip+hop
   // Extract the API path after /proxy/
