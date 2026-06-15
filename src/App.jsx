@@ -795,8 +795,8 @@ export default function App() {
     avatar: '',
     ...loadProfile(),
   }))
-  const [library, setLibrary] = useState([])
-  const [liked, setLiked] = useState(() => new Set())
+  const [library, setLibrary] = useState(() => loadLibrary())
+  const [liked, setLiked] = useState(() => new Set(loadLiked()))
   const [currentIdx, setCurrentIdx] = useState(-1)
   const [playing, setPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -828,6 +828,9 @@ export default function App() {
       .catch(() => toast('Falha ao carregar. A API está rodando?'))
       .finally(() => setHomeLoading(false))
   }, [])
+
+  useEffect(() => { saveLibrary(library) }, [library])
+  useEffect(() => { saveLiked(liked) }, [liked])
 
   useEffect(() => {
     const q = query.trim()
