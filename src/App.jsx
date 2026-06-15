@@ -975,6 +975,14 @@ export default function App() {
     let audio = audioRef.current
     if (!audio) {
       audio = new Audio()
+      audio.addEventListener('timeupdate', () =>
+        setCurrentTime(audio.currentTime),
+      )
+      audio.addEventListener('ended', () => handleTrackEnd())
+      audio.addEventListener(
+        'loadedmetadata',
+        () => audio.duration && setDuration(audio.duration),
+      )
       audioRef.current = audio
     }
     audio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA='
