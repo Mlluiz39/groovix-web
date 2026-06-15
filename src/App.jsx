@@ -18,9 +18,6 @@ const brazilianMusicSearches = [
   'músicas brasileiras 2026',
   'funk brasileiro 2026',
   'sertanejo brasileiro 2026',
-  'pagode brasileiro 2026',
-  'samba brasileiro 2026',
-  'piseiro brasileiro 2026',
 ]
 
 function Icon({ children, className = '' }) {
