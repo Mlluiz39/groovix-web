@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 
 const API = import.meta.env.VITE_API_URL || ''
 const PROFILE_KEY = 'Groovix-Web'
 const RECENT_SEARCHES_KEY = 'Groovix-Recent-Searches'
 const LIBRARY_KEY = 'Groovix-Library'
 const LIKED_KEY = 'Groovix-Liked'
+const STREAM_CACHE_KEY = 'Groovix-Stream-Cache'
+
+const SILENT_AUDIO_SRC =
+  'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA='
 
 const genres = [
   ['hip hop', 'Hip Hop', 'from-purple-950/80 to-cyan/50'],
@@ -84,6 +88,23 @@ function saveLiked(liked) {
   localStorage.setItem(LIKED_KEY, JSON.stringify([...liked]))
 }
 
+function loadStreamCache() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(STREAM_CACHE_KEY))
+    return stored && typeof stored === 'object' ? stored : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveStreamCache(cache) {
+  try {
+    localStorage.setItem(STREAM_CACHE_KEY, JSON.stringify(cache))
+  } catch {
+    // Cache é uma otimização; falha de storage não deve quebrar reprodução.
+  }
+}
+
 function getGreeting() {
   const h = new Date().getHours()
   if (h < 6) return 'Boa madrugada'
@@ -105,22 +126,34 @@ function genDefaultAvatar(name) {
   return `data:image/svg+xml,${encodeURIComponent(svg)}`
 }
 
-async function apiSearch(q) {
-  const r = await fetch(`${API}/api/search?q=${encodeURIComponent(q)}`)
-  if (!r.ok) throw new Error(await r.text())
+async function apiSearch(q, signal) {
+  const r = await fetch(`${API}/api/search?q=${encodeURIComponent(q)}`, {
+    signal,
+  })
+  if (!r.ok) throw new Error((await r.text()) || 'Falha na busca')
   const d = await r.json()
   return d.results || []
 }
 
-async function apiAudio(url) {
-  const r = await fetch(`${API}/api/audio?url=${encodeURIComponent(url)}`)
-  if (!r.ok) throw new Error(await r.text())
-  return r.json()
+async function apiAudio(url, signal) {
+  if (!url) throw new Error('URL da faixa indisponível')
+  const r = await fetch(`${API}/api/audio?url=${encodeURIComponent(url)}`, {
+    signal,
+  })
+  if (!r.ok) throw new Error((await r.text()) || 'Falha ao carregar áudio')
+  const data = await r.json()
+  if (!data?.streamUrl) throw new Error('Stream indisponível')
+  return data
 }
 
-async function apiBrazilianMusic() {
+async function apiBrazilianMusic(signal) {
   const batches = await Promise.all(
-    brazilianMusicSearches.map(term => apiSearch(term).catch(() => [])),
+    brazilianMusicSearches.map(term =>
+      apiSearch(term, signal).catch(error => {
+        if (signal?.aborted) throw error
+        return []
+      }),
+    ),
   )
   const seen = new Set()
   return batches.flat().filter(track => {
@@ -156,7 +189,7 @@ function Header({ onBack, profile, onProfile, right }) {
   )
 }
 
-function TrackItem({
+const TrackItem = memo(function TrackItem({
   track,
   active,
   liked,
@@ -205,7 +238,7 @@ function TrackItem({
       )}
     </div>
   )
-}
+})
 
 function HomeScreen({
   profile,
@@ -545,15 +578,21 @@ function NowPlaying({
     if (!canvas) return undefined
     const ctx = canvas.getContext('2d')
     let raf
-    const dpr = window.devicePixelRatio || 1
-    const draw = () => {
+    let width = 0
+    let height = 0
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    const resize = () => {
       const r = canvas.parentElement.getBoundingClientRect()
-      canvas.width = r.width * dpr
-      canvas.height = r.height * dpr
+      width = r.width
+      height = r.height
+      canvas.width = Math.floor(width * dpr)
+      canvas.height = Math.floor(height * dpr)
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      const w = r.width,
-        h = r.height,
-        bars = 64,
+    }
+    const draw = () => {
+      const w = width,
+        h = height,
+        bars = 48,
         t = Date.now() / 1000
       ctx.clearRect(0, 0, w, h)
       for (let i = 0; i < bars; i++) {
@@ -570,8 +609,14 @@ function NowPlaying({
       }
       raf = requestAnimationFrame(draw)
     }
+    resize()
+    const observer = new ResizeObserver(resize)
+    observer.observe(canvas.parentElement)
     draw()
-    return () => cancelAnimationFrame(raf)
+    return () => {
+      observer.disconnect()
+      cancelAnimationFrame(raf)
+    }
   }, [playing])
 
   if (!track) return null
@@ -809,30 +854,45 @@ export default function App() {
   const [recent, setRecent] = useState(loadRecentSearches)
   const [toastMsg, setToastMsg] = useState('')
   const audioRef = useRef(null)
-  const timerRef = useRef(null)
-  // Refs to avoid stale closures in timer callbacks
+  const audioRequestIdRef = useRef(0)
+  const audioAbortRef = useRef(null)
+  const playPromiseRef = useRef(null)
+  const streamCacheRef = useRef(loadStreamCache())
+  const searchRequestIdRef = useRef(0)
+  const toastTimerRef = useRef(null)
   const repeatRef = useRef(repeat)
-  const durationRef = useRef(duration)
-  useEffect(() => { repeatRef.current = repeat }, [repeat])
-  useEffect(() => { durationRef.current = duration }, [duration])
+  useEffect(() => {
+    repeatRef.current = repeat
+  }, [repeat])
   const currentTrack = library[currentIdx] || null
   const featured = homeTracks[0]
 
   const toast = msg => {
     setToastMsg(msg)
-    window.clearTimeout(toast.timer)
-    toast.timer = window.setTimeout(() => setToastMsg(''), 2000)
+    window.clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = window.setTimeout(() => setToastMsg(''), 2000)
   }
 
   useEffect(() => {
-    apiBrazilianMusic()
+    const controller = new AbortController()
+    apiBrazilianMusic(controller.signal)
       .then(setHomeTracks)
-      .catch(() => toast('Falha ao carregar. A API está rodando?'))
-      .finally(() => setHomeLoading(false))
+      .catch(error => {
+        if (error.name !== 'AbortError')
+          toast('Falha ao carregar. A API está rodando?')
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setHomeLoading(false)
+      })
+    return () => controller.abort()
   }, [])
 
-  useEffect(() => { saveLibrary(library) }, [library])
-  useEffect(() => { saveLiked(liked) }, [liked])
+  useEffect(() => {
+    saveLibrary(library)
+  }, [library])
+  useEffect(() => {
+    saveLiked(liked)
+  }, [liked])
 
   useEffect(() => {
     const q = query.trim()
@@ -841,11 +901,14 @@ export default function App() {
       setSearchError('')
       return undefined
     }
+    const requestId = ++searchRequestIdRef.current
+    const controller = new AbortController()
     setSearching(true)
     setSearchError('')
     const id = window.setTimeout(() => {
-      apiSearch(q)
+      apiSearch(q, controller.signal)
         .then(r => {
+          if (requestId !== searchRequestIdRef.current) return
           setResults(r)
           setRecent(old => {
             const next = [q, ...old.filter(item => item !== q)].slice(0, 8)
@@ -853,10 +916,22 @@ export default function App() {
             return next
           })
         })
-        .catch(() => setSearchError('Erro na busca. A API está rodando?'))
-        .finally(() => setSearching(false))
+        .catch(error => {
+          if (
+            requestId === searchRequestIdRef.current &&
+            error.name !== 'AbortError'
+          ) {
+            setSearchError('Erro na busca. A API está rodando?')
+          }
+        })
+        .finally(() => {
+          if (requestId === searchRequestIdRef.current) setSearching(false)
+        })
     }, 400)
-    return () => window.clearTimeout(id)
+    return () => {
+      window.clearTimeout(id)
+      controller.abort()
+    }
   }, [query])
 
   useEffect(() => {
@@ -878,10 +953,41 @@ export default function App() {
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen])
 
-  useEffect(() => () => stopAudio(), [])
+  useEffect(() => {
+    const audio = new Audio()
+    audio.preload = 'auto'
+    const handleTimeUpdate = () => setCurrentTime(audio.currentTime || 0)
+    const handleEnded = () => handleTrackEndRef.current?.()
+    const handleLoadedMetadata = () => {
+      if (Number.isFinite(audio.duration)) setDuration(audio.duration)
+    }
+    const handleError = () => {
+      if (!audio.paused) toast('Erro ao reproduzir áudio.')
+      setPlaying(false)
+    }
+    audio.addEventListener('timeupdate', handleTimeUpdate)
+    audio.addEventListener('ended', handleEnded)
+    audio.addEventListener('loadedmetadata', handleLoadedMetadata)
+    audio.addEventListener('error', handleError)
+    audioRef.current = audio
+
+    return () => {
+      audioRequestIdRef.current += 1
+      audioAbortRef.current?.abort()
+      audio.pause()
+      audio.removeAttribute('src')
+      audio.load()
+      audio.removeEventListener('timeupdate', handleTimeUpdate)
+      audio.removeEventListener('ended', handleEnded)
+      audio.removeEventListener('loadedmetadata', handleLoadedMetadata)
+      audio.removeEventListener('error', handleError)
+      audioRef.current = null
+      window.clearTimeout(toastTimerRef.current)
+    }
+  }, [])
 
   const progress = useMemo(
     () => (duration > 0 ? (currentTime / duration) * 100 : 0),
@@ -897,13 +1003,15 @@ export default function App() {
       title: track.title || 'Desconhecida',
       artist: track.channel || 'Desconhecido',
       album: 'Groovix',
-      artwork: track.thumbnail ? [{ src: track.thumbnail, sizes: '512x512', type: 'image/jpeg' }] : [],
+      artwork: track.thumbnail
+        ? [{ src: track.thumbnail, sizes: '512x512', type: 'image/jpeg' }]
+        : [],
     })
     navigator.mediaSession.setActionHandler('play', () => setPlaying(true))
     navigator.mediaSession.setActionHandler('pause', () => setPlaying(false))
     navigator.mediaSession.setActionHandler('previoustrack', () => playPrev())
     navigator.mediaSession.setActionHandler('nexttrack', () => playNext())
-    navigator.mediaSession.setActionHandler('seekto', (e) => {
+    navigator.mediaSession.setActionHandler('seekto', e => {
       if (e.seekTime != null) seek(e.seekTime)
     })
     return () => {
@@ -922,33 +1030,15 @@ export default function App() {
     }
   }, [playing])
 
-  function stopFallbackTimer() {
-    if (timerRef.current) window.clearInterval(timerRef.current)
-    timerRef.current = null
-  }
-  function startFallbackTimer() {
-    stopFallbackTimer()
-    timerRef.current = window.setInterval(
-      () =>
-        setCurrentTime(t => {
-          // Use refs to avoid stale closure on duration and repeat
-          const dur = durationRef.current
-          if (t + 0.25 >= dur) {
-            handleTrackEndRef.current()
-            return dur
-          }
-          return t + 0.25
-        }),
-      250,
-    )
-  }
-  function stopAudio() {
-    stopFallbackTimer()
-    if (audioRef.current) {
-      audioRef.current.pause()
-      audioRef.current.removeAttribute('src')
-      audioRef.current.load() // release media resources
-    }
+  function prepareForNewTrack() {
+    audioRequestIdRef.current += 1
+    audioAbortRef.current?.abort()
+    playPromiseRef.current = null
+    if (!audioRef.current) return null
+    audioRef.current.pause()
+    audioRef.current.removeAttribute('src')
+    audioRef.current.load()
+    return audioRef.current
   }
   // handleTrackEnd ref to avoid stale closure in setInterval callback
   const handleTrackEndRef = useRef(null)
@@ -971,65 +1061,92 @@ export default function App() {
     playTrack(ensureInLibrary(track), track)
   }
 
-  // iOS: create audio element in user gesture, play silently, then swap src
-  function playTrack(idx, immediateTrack) {
+  async function playAudioElement(audio, requestId) {
+    if (playPromiseRef.current) {
+      await playPromiseRef.current.catch(() => {})
+    }
+    if (requestId !== audioRequestIdRef.current) return
+    const playPromise = audio.play()
+    playPromiseRef.current = playPromise
+    try {
+      await playPromise
+    } finally {
+      if (playPromiseRef.current === playPromise) playPromiseRef.current = null
+    }
+  }
+
+  async function resolveStreamUrl(track, signal) {
+    const cacheKey = track.id || track.url
+    if (cacheKey && streamCacheRef.current[cacheKey]) {
+      return streamCacheRef.current[cacheKey]
+    }
+    const info = await apiAudio(track.url, signal)
+    if (cacheKey) {
+      streamCacheRef.current = {
+        ...streamCacheRef.current,
+        [cacheKey]: info.streamUrl,
+      }
+      saveStreamCache(streamCacheRef.current)
+    }
+    return info.streamUrl
+  }
+
+  async function playTrack(idx, immediateTrack) {
     const track = immediateTrack || library[idx]
     if (!track) return
-    stopAudio()
+    const audio = prepareForNewTrack()
+    const requestId = audioRequestIdRef.current
+    const controller = new AbortController()
+    audioAbortRef.current = controller
     setCurrentIdx(idx)
     setCurrentTime(0)
     setDuration(track.duration || 180)
     setPlaying(true)
+    if (!audio) return
 
-    // Reuse single Audio element (Chrome limits WebMediaPlayers)
-    let audio = audioRef.current
-    if (!audio) {
-      audio = new Audio()
-      audio.addEventListener('timeupdate', () =>
-        setCurrentTime(audio.currentTime),
+    try {
+      audio.src = SILENT_AUDIO_SRC
+      await playAudioElement(audio, requestId).catch(() => {})
+      const streamUrl = await resolveStreamUrl(track, controller.signal)
+      if (requestId !== audioRequestIdRef.current) return
+      audio.pause()
+      audio.src = streamUrl
+      audio.preload = 'auto'
+      audio.load()
+      await playAudioElement(audio, requestId)
+    } catch (error) {
+      if (
+        requestId !== audioRequestIdRef.current ||
+        error.name === 'AbortError'
       )
-      audio.addEventListener('ended', () => handleTrackEnd())
-      audio.addEventListener(
-        'loadedmetadata',
-        () => audio.duration && setDuration(audio.duration),
-      )
-      audioRef.current = audio
+        return
+      setPlaying(false)
+      toast(error.message || 'Não foi possível carregar o áudio.')
     }
-    audio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA='
-    audio.play().catch(() => {})
-
-    apiAudio(track.url)
-      .then(info => {
-        if (!info?.streamUrl) {
-          startFallbackTimer()
-          return
-        }
-        audio.src = info.streamUrl
-        audio.play().catch(() => startFallbackTimer())
-      })
-      .catch(() => startFallbackTimer())
   }
   function togglePlay() {
     if (!currentTrack) return
-    setPlaying(p => {
-      const next = !p
-      if (next) {
-        audioRef.current
-          ? audioRef.current.play().catch(() => startFallbackTimer())
-          : startFallbackTimer()
-      } else {
-        audioRef.current?.pause()
-        stopFallbackTimer()
-      }
-      return next
-    })
+    const audio = audioRef.current
+    if (!audio) return
+    if (playing) {
+      audio.pause()
+      setPlaying(false)
+      return
+    }
+    playAudioElement(audio, audioRequestIdRef.current)
+      .then(() => setPlaying(true))
+      .catch(error => toast(error.message || 'Não foi possível reproduzir.'))
   }
   function handleTrackEnd() {
     // Use ref so the fallback timer callback always gets the latest value
     if (repeatRef.current) {
       setCurrentTime(0)
-      if (audioRef.current) audioRef.current.currentTime = 0
-      else startFallbackTimer()
+      if (audioRef.current) {
+        audioRef.current.currentTime = 0
+        playAudioElement(audioRef.current, audioRequestIdRef.current).catch(
+          () => {},
+        )
+      }
       return
     }
     playNext()
@@ -1064,7 +1181,13 @@ export default function App() {
       const wasLiked = next.has(track.id)
       wasLiked ? next.delete(track.id) : next.add(track.id)
       // Schedule toast after state update with the correct value
-      setTimeout(() => toast(wasLiked ? 'Removida dos favoritos' : 'Adicionada aos favoritos'), 0)
+      setTimeout(
+        () =>
+          toast(
+            wasLiked ? 'Removida dos favoritos' : 'Adicionada aos favoritos',
+          ),
+        0,
+      )
       return next
     })
   }
