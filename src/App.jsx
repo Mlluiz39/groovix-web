@@ -974,8 +974,7 @@ export default function App() {
           return
         }
         const audio = new Audio()
-        audio.referrerPolicy = 'no-referrer'
-        audio.src = info.streamUrl
+        audio.src = `${API}/api/stream?url=${encodeURIComponent(info.streamUrl)}`
         audioRef.current = audio
         audio.addEventListener('timeupdate', () =>
           setCurrentTime(audio.currentTime),
