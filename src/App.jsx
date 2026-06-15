@@ -1004,7 +1004,7 @@ export default function App() {
           startFallbackTimer()
           return
         }
-        audio.src = `${API}/api/stream?url=${encodeURIComponent(info.streamUrl)}`
+        audio.src = info.streamUrl
         audio.play().catch(() => startFallbackTimer())
       })
       .catch(() => startFallbackTimer())
