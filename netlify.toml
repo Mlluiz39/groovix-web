@@ -3,9 +3,10 @@
   publish = "dist"
 
 # Proxy API calls to VPS backend (avoids mixed content)
+# VITE_API_URL must be set in Netlify env vars
 [[redirects]]
   from = "/api/*"
-  to = "http://162.250.121.168:8081/api/:splat"
+  to = "${VITE_API_URL}/api/:splat"
   status = 200
   force = true
 
