@@ -1,0 +1,19 @@
+{
+  "name": "Sonic Portal — Groovix",
+  "short_name": "Sonic Portal",
+  "description": "Premium cyberpunk music streaming experience",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a1322",
+  "theme_color": "#00e5ff",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
