@@ -882,6 +882,40 @@ export default function App() {
     [currentTime, duration],
   )
 
+  // Media Session API — lock screen controls
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    const track = library[currentIdx]
+    if (!track) return
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: track.title || 'Desconhecida',
+      artist: track.channel || 'Desconhecido',
+      album: 'Groovix',
+      artwork: track.thumbnail ? [{ src: track.thumbnail, sizes: '512x512', type: 'image/jpeg' }] : [],
+    })
+    navigator.mediaSession.setActionHandler('play', () => setPlaying(true))
+    navigator.mediaSession.setActionHandler('pause', () => setPlaying(false))
+    navigator.mediaSession.setActionHandler('previoustrack', playPrev)
+    navigator.mediaSession.setActionHandler('nexttrack', playNext)
+    navigator.mediaSession.setActionHandler('seekto', (e) => {
+      if (e.seekTime != null) seek(e.seekTime)
+    })
+    return () => {
+      navigator.mediaSession.setActionHandler('play', null)
+      navigator.mediaSession.setActionHandler('pause', null)
+      navigator.mediaSession.setActionHandler('previoustrack', null)
+      navigator.mediaSession.setActionHandler('nexttrack', null)
+      navigator.mediaSession.setActionHandler('seekto', null)
+    }
+  }, [currentIdx, library[currentIdx]?.id])
+
+  // Sync playing state with media session
+  useEffect(() => {
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.playbackState = playing ? 'playing' : 'paused'
+    }
+  }, [playing])
+
   function stopFallbackTimer() {
     if (timerRef.current) window.clearInterval(timerRef.current)
     timerRef.current = null
