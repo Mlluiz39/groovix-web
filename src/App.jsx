@@ -941,7 +941,8 @@ export default function App() {
     stopFallbackTimer()
     if (audioRef.current) {
       audioRef.current.pause()
-      audioRef.current = null
+      audioRef.current.removeAttribute('src')
+      audioRef.current.load() // release media resources
     }
   }
   function ensureInLibrary(track) {
