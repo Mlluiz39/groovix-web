@@ -898,8 +898,8 @@ export default function App() {
     })
     navigator.mediaSession.setActionHandler('play', () => setPlaying(true))
     navigator.mediaSession.setActionHandler('pause', () => setPlaying(false))
-    navigator.mediaSession.setActionHandler('previoustrack', playPrev)
-    navigator.mediaSession.setActionHandler('nexttrack', playNext)
+    navigator.mediaSession.setActionHandler('previoustrack', () => playPrev())
+    navigator.mediaSession.setActionHandler('nexttrack', () => playNext())
     navigator.mediaSession.setActionHandler('seekto', (e) => {
       if (e.seekTime != null) seek(e.seekTime)
     })
@@ -910,7 +910,7 @@ export default function App() {
       navigator.mediaSession.setActionHandler('nexttrack', null)
       navigator.mediaSession.setActionHandler('seekto', null)
     }
-  }, [currentIdx, library[currentIdx]?.id])
+  }, [currentIdx, library[currentIdx]?.id, playing])
 
   // Sync playing state with media session
   useEffect(() => {
