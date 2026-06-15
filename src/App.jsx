@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-const API = import.meta.env.VITE_API_URL
+const API = import.meta.env.VITE_API_URL || ''
 const PROFILE_KEY = 'Groovix-Web'
 const RECENT_SEARCHES_KEY = 'Groovix-Recent-Searches'
 
